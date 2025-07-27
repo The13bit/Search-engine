@@ -12,6 +12,7 @@ stop-words = {version = "0.8.1",features = ["nltk","iso"]}
 tokenizers ={version= "0.21.2", features = ["http"]}
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
+dotenv = "0.15.0"
 [profile.release]
 debug = 1
 
