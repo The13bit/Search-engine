@@ -1,16 +1,20 @@
 mod utils;
+mod models;
+mod db;
 use lol_html::{element, rewrite_str, text, HtmlRewriter, RewriteStrSettings, Settings};
+use mongodb::error::Error;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT},
     Client,
 };
+use dotenv::dotenv;
 
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader, Write},
     path::Path,
-    str,
+    str, sync::Arc,
 };
 use tokenizers::tokenizer::{Result, Tokenizer};
 
@@ -18,7 +22,9 @@ use human_regex::{exactly, one_or_more, or, punctuation, whitespace, word_bounda
 use stop_words::{get as sget, LANGUAGE};
 use utils::{is_binary_extension, is_text_content};
 
-use crate::utils::{ extract_structured_data, ExtractedData, Store};
+use db::Database;
+
+use crate::{models::Document, utils::{ create_frequency, extract_structured_data, ExtractedData, Store}};
 fn clean_html(body: String) -> String {
     let mut output = String::new();
     let mut rewriter = HtmlRewriter::new(
@@ -132,7 +138,7 @@ async fn check_content_type(client: &Client, url: &str) -> bool {
     true
 }
 
-async fn process(url: String) -> Result<ExtractedData> {
+async fn process(url: String,db:Arc<Database>)->Result<bool>  {
     let tokenizer = create_tokenizer().unwrap();
     let client = Client::new();
 
@@ -142,15 +148,21 @@ async fn process(url: String) -> Result<ExtractedData> {
 
     let page=get_data(&client, &url).await;
 
-    let output = extract_structured_data(page);
+    let output = extract_structured_data(page,url);
     println!("{}",output);
-    Ok(output)
-
+    let words=create_frequency(&output);
+    db.insert_document(output).await;
+    db.insert_words(words).await;
+    Ok(true)
+    
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv().ok().expect("Env error");
     let path=Path::new("../urls.txt");
+    
+    let db=Arc::new(Database::new().await);
 
     let file=match File::open(path) {
         Ok(file)=>file,
@@ -161,11 +173,9 @@ async fn main() -> Result<()> {
     };
     
     let urls=BufReader::new(file).lines();
-    let mut stores: Vec<ExtractedData> = Vec::new();
-    let mut cnt=0;
     for url in urls {
-        stores.push(process(url.unwrap()).await?);
-        cnt+=1;
+        process(url.unwrap(),db.clone()).await;
+        break;
     }
     
     Ok(())
