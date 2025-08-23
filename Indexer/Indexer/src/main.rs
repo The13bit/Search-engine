@@ -15,7 +15,7 @@ use std::{
     os::windows::process,
     path::Path,
     str,
-    sync::Arc,
+    sync::{atomic::AtomicI32, Arc},
 };
 
 use utils::{is_binary_extension, is_text_content};
@@ -192,6 +192,7 @@ async fn main() -> Result<(), ()> {
     let pool = Arc::new(Semaphore::new(10));
 
     let db = Arc::new(Database::new().await);
+    let pbar=AtomicI32::new(0);
 
     let file = match File::open(path) {
         Ok(file) => file,
