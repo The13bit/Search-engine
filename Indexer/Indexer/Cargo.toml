@@ -1,0 +1,20 @@
+[package]
+name = "Indexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+human_regex = "0.3.0"
+lol_html = "2.5.0"
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1.0.219", features = ["derive"] }
+stop-words = {version = "0.8.1",features = ["nltk","iso"]}
+tokio = { version = "1", features = ["full"] }
+serde_json = "1.0"
+dotenv = "0.15.0"
+mongodb = "3.2.4"
+urlencoding = "2.1.3"
+rayon = "1.11"
+[profile.release]
+debug = 1
+

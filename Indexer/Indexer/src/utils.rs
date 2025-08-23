@@ -2,10 +2,9 @@ use human_regex::{
     any, exactly, one_or_more, or, punctuation, text as htext, whitespace, word_boundary,
     zero_or_more,
 };
-use lol_html::{element, rewrite_str, text, HtmlRewriter, RewriteStrSettings, Settings};
-use mongodb::bson::oid::ObjectId;
+use lol_html::{element, rewrite_str, text, RewriteStrSettings};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt,
     fs::File,
     io::Write,
@@ -49,8 +48,8 @@ pub fn is_text_content(content_type: &String) -> bool {
 pub fn save_idf(num_doc: usize, global_count: &HashMap<String, i32>) {
     let mut idf: HashMap<String, f32> = HashMap::new();
     let doc_num = num_doc as f32 + 1.0;
-    let mut mn = f32::MAX;
-    let mut mx = f32::MIN;
+    let mn = f32::MAX;
+    let mx = f32::MIN;
     for (word, count) in global_count.iter() {
         idf.entry(word.clone())
             .or_insert(f32::log10(doc_num / (*count as f32 + 1.0)) + 1.0);
@@ -242,24 +241,24 @@ pub fn create_frequency(data: &Document) -> Vec<Words> {
         count.entry(i).and_modify(|x| *x += 1).or_insert(1);
     }
     //adding multiplier to keyword appearing in title
-    println!("{}", data.get_title());
+    //println!("{}", data.get_title());
     let title: Vec<String> = clean_corpus(data.get_title())
         .split(" ")
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect();
-    println!("{:?}", title);
+    //println!("{:?}", title);
     for i in &title {
         count.entry(i).and_modify(|x| *x += 50);
     }
     //adding multiplier to keyword appearing in descripton
-    println!("{}", data.get_description());
+    //println!("{}", data.get_description());
     let descripton: Vec<String> = clean_corpus(data.get_description())
         .split(" ")
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect();
-    println!("{:?}", descripton);
+    //println!("{:?}", descripton);
     for i in &descripton {
         count.entry(i).and_modify(|x| *x += 10);
     }
@@ -269,7 +268,7 @@ pub fn create_frequency(data: &Document) -> Vec<Words> {
     key_val_pairs.sort_by(|a, b| b.1.cmp(&a.1));
     let top_words = key_val_pairs.into_iter().take(1000);
 
-    println!("{:?}", top_words);
+    //println!("{:?}", top_words);
     let mut words_arr:Vec<Words>=Vec::new();
     for (i,j) in top_words{
         words_arr.push(

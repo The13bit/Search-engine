@@ -1,30 +1,34 @@
-mod utils;
-mod models;
 mod db;
+mod errors;
+mod models;
+mod utils;
+use dotenv::dotenv;
 use lol_html::{element, rewrite_str, text, HtmlRewriter, RewriteStrSettings, Settings};
-use mongodb::error::Error;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT},
     Client,
 };
-use dotenv::dotenv;
 
 use std::{
-    collections::{HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader, Write},
+    os::windows::process,
     path::Path,
-    str, sync::Arc,
+    str,
+    sync::Arc,
 };
-use tokenizers::tokenizer::{Result, Tokenizer};
 
-use human_regex::{exactly, one_or_more, or, punctuation, whitespace, word_boundary};
-use stop_words::{get as sget, LANGUAGE};
 use utils::{is_binary_extension, is_text_content};
+
+use tokio::sync::Semaphore;
+use urlencoding::decode;
 
 use db::Database;
 
-use crate::{models::Document, utils::{ create_frequency, extract_structured_data, ExtractedData, Store}};
+use crate::{
+    errors::StateEvents,
+    utils::{create_frequency, extract_structured_data},
+};
 fn clean_html(body: String) -> String {
     let mut output = String::new();
     let mut rewriter = HtmlRewriter::new(
@@ -78,11 +82,6 @@ fn extract_text(text: String) -> Vec<String> {
             .collect()
     }
 }
-fn create_tokenizer() -> Result<Tokenizer> {
-    let tokenizer = Tokenizer::from_pretrained("bert-large-cased", None)?;
-    Ok(tokenizer)
-}
-
 
 async fn get_data(client: &Client, url: &str) -> String {
     let mut headers = HeaderMap::new();
@@ -111,7 +110,7 @@ async fn check_content_type(client: &Client, url: &str) -> bool {
                 if !is_text_content(&content_type_str) {
                     println!(
                         "Skipping non-text content: {} (Content-Type: {})",
-                        url,content_type_str
+                        url, content_type_str
                     );
                     return false;
                 }
@@ -138,45 +137,82 @@ async fn check_content_type(client: &Client, url: &str) -> bool {
     true
 }
 
-async fn process(url: String,db:Arc<Database>)->Result<bool>  {
-    let tokenizer = create_tokenizer().unwrap();
+async fn process(url: String, db: Arc<Database>) -> StateEvents {
+    match db.url_exists(&url).await {
+        Ok(exists) => {
+            if exists {
+                return StateEvents::UrlExists;
+            }
+        }
+        Err(e) => {
+            println!("Error checking URL existence: {}", e);
+            return StateEvents::UrlError;
+        }
+    }
     let client = Client::new();
 
-    if is_binary_extension(&url) || !check_content_type(&client,& url).await {
-        return Err("Check Failed".into());
+    if is_binary_extension(&url) || !check_content_type(&client, &url).await {
+        return StateEvents::InvalidExtension;
     }
 
-    let page=get_data(&client, &url).await;
+    let page = get_data(&client, &url).await;
 
-    let output = extract_structured_data(page,url);
-    println!("{}",output);
-    let words=create_frequency(&output);
-    db.insert_document(output).await;
-    db.insert_words(words).await;
-    Ok(true)
-    
+    let documents = extract_structured_data(page, url);
+    //println!("{}",output);
+    let words = create_frequency(&documents);
+
+    if db.try_commit(documents, words).await {
+        return StateEvents::TransactionSuccess;
+    }
+    StateEvents::TransactionError
 }
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    dotenv().ok().expect("Env error");
-    let path=Path::new("../urls.txt");
-    
-    let db=Arc::new(Database::new().await);
-
-    let file=match File::open(path) {
-        Ok(file)=>file,
-        Err(e)=>{panic!("{}",e);}
-
-        
-        
-    };
-    
-    let urls=BufReader::new(file).lines();
-    for url in urls {
-        process(url.unwrap(),db.clone()).await;
-        break;
+async fn process_url(url: String, db: Arc<Database>) {
+    match process(decode(url.as_str()).expect("UTF-8").into_owned(), db).await {
+        StateEvents::TransactionSuccess => {
+            println!("Transaction successful");
+        }
+        StateEvents::InvalidExtension => {
+            println!("Invalid extension or content type, skipping URL");
+        }
+        StateEvents::TransactionError => {
+            println!("Transaction failed");
+        }
+        StateEvents::UrlExists => {
+            println!("URL already exists");
+        }
+        StateEvents::UrlError => {
+            println!("Error checking URL");
+        }
     }
-    
+}
+#[tokio::main]
+async fn main() -> Result<(), ()> {
+    dotenv().ok().expect("Env error");
+    let path = Path::new("../urls.txt");
+    let pool = Arc::new(Semaphore::new(10));
+
+    let db = Arc::new(Database::new().await);
+
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) => {
+            panic!("{}", e);
+        }
+    };
+    let mut tasks = Vec::new();
+    let urls = BufReader::new(file).lines();
+    for url in urls.flatten() {
+        let db_clone = Arc::clone(&db);
+        let pool_clone = Arc::clone(&pool);
+
+        let task = tokio::spawn(async move {
+            let _permit = pool_clone.acquire().await.unwrap();
+            process_url(url, db_clone).await;
+        });
+        tasks.push(task);
+    }
+    for task in tasks {
+        let _ = task.await;
+    }
     Ok(())
 }
